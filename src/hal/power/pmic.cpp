@@ -25,7 +25,7 @@ static void applyOperatingPoint(
 bool hal_pmic_init(const DevicePmic &cfg, uint16_t input_current_limit_ma) {
 #if defined(PMIC_BQ25896)
     bool ok = (cfg.pin_sda < 0 && cfg.pin_scl < 0) ? ppm.init()
-                                                    : ppm.init(Wire, cfg.pin_sda, cfg.pin_scl, cfg.address);
+                                                   : ppm.init(Wire, cfg.pin_sda, cfg.pin_scl, cfg.address);
     if (!ok) return false;
     applyOperatingPoint(input_current_limit_ma, cfg.charge_target_mv, cfg.charge_current_ma);
     return true;
@@ -55,6 +55,18 @@ bool hal_pmic_init_via_callbacks(
 void hal_pmic_shutdown() {
 #if defined(PMIC_BQ25896)
     ppm.shutdown();
+#endif
+}
+
+void hal_pmic_enable_charge() {
+#if defined(PMIC_BQ25896)
+    ppm.enableCharge();
+#endif
+}
+
+void hal_pmic_disable_charge() {
+#if defined(PMIC_BQ25896)
+    ppm.disableCharge();
 #endif
 }
 
@@ -113,6 +125,14 @@ bool hal_pmic_is_charging() {
 bool hal_pmic_is_charge_done() {
 #if defined(PMIC_BQ25896)
     return ppm.isChargeDone();
+#else
+    return false;
+#endif
+}
+
+bool hal_pmic_is_vbus_in() {
+#if defined(PMIC_BQ25896)
+    return ppm.isVbusIn();
 #else
     return false;
 #endif

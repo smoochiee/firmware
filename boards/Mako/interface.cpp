@@ -116,6 +116,42 @@ int getBattery() {
 ***************************************************************************************/
 bool isCharging() { return hal_pmic_is_charging(); }
 
+static void checkPmicBattery() {
+    static uint32_t lastCheck = 0;
+    static uint32_t lowBatterySince = 0;
+    static bool chargingEnabled = true;
+    static bool shutdownRequested = false;
+
+    uint32_t now = millis();
+    if (shutdownRequested || now - lastCheck < 1000) return;
+    lastCheck = now;
+
+    bool vbusIn = hal_pmic_is_vbus_in();
+    if (vbusIn != chargingEnabled) {
+        if (vbusIn) hal_pmic_enable_charge();
+        else hal_pmic_disable_charge();
+        chargingEnabled = vbusIn;
+    }
+
+    if (vbusIn) {
+        lowBatterySince = 0;
+        return;
+    }
+
+    int voltage = hal_pmic_get_batt_voltage_mv();
+    if (voltage >= 3300) {
+        lowBatterySince = 0;
+        return;
+    }
+
+    if (lowBatterySince == 0) lowBatterySince = now;
+    else if (now - lowBatterySince >= 2000) {
+        Serial.printf("[PMIC] Battery critically low (%d mV); shutting down\n", voltage);
+        shutdownRequested = true;
+        powerOff();
+    }
+}
+
 /*********************************************************************
 ** Function: setBrightness
 **********************************************************************/
@@ -127,6 +163,8 @@ void _setBrightness(uint8_t brightval) { hal_bright_set(TFT_BL, brightval); }
 ** using IO Expander
 **********************************************************************/
 void InputHandler() {
+    checkPmicBattery();
+
     static unsigned long tm = 0;
 
     static bool lastUp = false;

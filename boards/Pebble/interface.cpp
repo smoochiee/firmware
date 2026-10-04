@@ -165,12 +165,19 @@ void InputHandler() {
 
     static unsigned long tm = 0;
 
-    static bool lastUp = false;
-    static bool lastDown = false;
-    static bool lastLeft = false;
-    static bool lastRight = false;
+    struct RepeatState {
+        bool wasPressed = false;
+        unsigned long pressedAt = 0;
+        unsigned long lastSentAt = 0;
+    };
+    static RepeatState upRepeat;
+    static RepeatState downRepeat;
+    static RepeatState leftRepeat;
+    static RepeatState rightRepeat;
     static bool lastSel = false;
     static bool lastEsc = false;
+    constexpr unsigned long kRepeatDelayMs = 500;
+    constexpr unsigned long kRepeatIntervalMs = 250;
 
     uint16_t pins = ioExpander.inputGPIO();
 
@@ -194,20 +201,38 @@ void InputHandler() {
         }
     }
 
-    UpPress = up && !lastUp;
-    DownPress = down && !lastDown;
-    PrevPress = left && !lastLeft;
-    NextPress = right && !lastRight;
+    const unsigned long now = millis();
+    auto repeatPressed = [now](bool pressed, RepeatState &state) {
+        if (!pressed) {
+            state.wasPressed = false;
+            return false;
+        }
+
+        if (!state.wasPressed) {
+            state.wasPressed = true;
+            state.pressedAt = now;
+            state.lastSentAt = now;
+            return true;
+        }
+
+        if (now - state.pressedAt >= kRepeatDelayMs &&
+            now - state.lastSentAt >= kRepeatIntervalMs) {
+            state.lastSentAt = now;
+            return true;
+        }
+        return false;
+    };
+
+    UpPress = repeatPressed(up, upRepeat);
+    DownPress = repeatPressed(down, downRepeat);
+    PrevPress = repeatPressed(left, leftRepeat);
+    NextPress = repeatPressed(right, rightRepeat);
     SelPress = sel && !lastSel;
     EscPress = esc && !lastEsc;
 
     PrevPagePress = UpPress;
     NextPagePress = DownPress;
 
-    lastUp = up;
-    lastDown = down;
-    lastLeft = left;
-    lastRight = right;
     lastSel = sel;
     lastEsc = esc;
 

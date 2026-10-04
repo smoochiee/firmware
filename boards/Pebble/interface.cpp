@@ -2,9 +2,9 @@
 #include "core/powerSave.h"
 #include "core/utils.h"
 #include "hal/bright/bright.h"
+#include <Wire.h>
 #include <globals.h>
 #include <interface.h>
-#include <Wire.h>
 
 #define EXPANDER_INT_PIN 28
 
@@ -25,8 +25,8 @@ void _setup_gpio() {
     bruceConfigPins.irTx = 25;
     bruceConfigPins.irRx = 26;
     bruceConfigPins.rotation = 1;
-    bruceConfigPins.uart_bus = {(gpio_num_t)12, (gpio_num_t)11};  // rx, tx
-    bruceConfigPins.gps_bus = {(gpio_num_t)12, (gpio_num_t)11};   // rx, tx
+    bruceConfigPins.uart_bus = {(gpio_num_t)12, (gpio_num_t)11};   // rx, tx
+    bruceConfigPins.gps_bus = {(gpio_num_t)12, (gpio_num_t)11};    // rx, tx
     bruceConfigPins.badusb_bus = {(gpio_num_t)12, (gpio_num_t)11}; // rx, tx (CH9329)
     // Board's default/generic SPI bus (used by drivers without their own bus, e.g. RC522-SPI)
     bruceConfigPins.outer_bus = {(gpio_num_t)6, (gpio_num_t)2, (gpio_num_t)7, (gpio_num_t)8};
@@ -37,7 +37,8 @@ void _setup_gpio() {
     bruceConfigPins.NRF24_bus = {
         (gpio_num_t)6, (gpio_num_t)2, (gpio_num_t)7, (gpio_num_t)8, (gpio_num_t)1
     }; // sck,miso,mosi,cs(ss),ce
-    bruceConfigPins.SDCARD_bus = {(gpio_num_t)6, (gpio_num_t)2, (gpio_num_t)7, (gpio_num_t)0
+    bruceConfigPins.SDCARD_bus = {
+        (gpio_num_t)6, (gpio_num_t)2, (gpio_num_t)7, (gpio_num_t)0
     }; // sck,miso,mosi,cs
 
     pinMode(TFT_CS, OUTPUT);
@@ -113,6 +114,42 @@ int getBattery() {
 ***************************************************************************************/
 bool isCharging() { return hal_pmic_is_charging(); }
 
+static void checkPmicBattery() {
+    static uint32_t lastCheck = 0;
+    static uint32_t lowBatterySince = 0;
+    static bool chargingEnabled = true;
+    static bool shutdownRequested = false;
+
+    uint32_t now = millis();
+    if (shutdownRequested || now - lastCheck < 1000) return;
+    lastCheck = now;
+
+    bool vbusIn = hal_pmic_is_vbus_in();
+    if (vbusIn != chargingEnabled) {
+        if (vbusIn) hal_pmic_enable_charge();
+        else hal_pmic_disable_charge();
+        chargingEnabled = vbusIn;
+    }
+
+    if (vbusIn) {
+        lowBatterySince = 0;
+        return;
+    }
+
+    int voltage = hal_pmic_get_batt_voltage_mv();
+    if (voltage >= 3300) {
+        lowBatterySince = 0;
+        return;
+    }
+
+    if (lowBatterySince == 0) lowBatterySince = now;
+    else if (now - lowBatterySince >= 2000) {
+        Serial.printf("[PMIC] Battery critically low (%d mV); shutting down\n", voltage);
+        shutdownRequested = true;
+        powerOff();
+    }
+}
+
 /*********************************************************************
 ** Function: setBrightness
 **********************************************************************/
@@ -124,6 +161,8 @@ void _setBrightness(uint8_t brightval) { hal_bright_set(TFT_BL, brightval); }
 ** using IO Expander
 **********************************************************************/
 void InputHandler() {
+    checkPmicBattery();
+
     static unsigned long tm = 0;
 
     static bool lastUp = false;

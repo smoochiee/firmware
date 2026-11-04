@@ -47,8 +47,6 @@ void _setup_gpio() {
     digitalWrite(TFT_MOSI, HIGH);
     pinMode(TFT_SCLK, OUTPUT);
 
-    hal_bright_attach(TFT_BL);
-    hal_bright_set(TFT_BL, 100);
     pinMode(TFT_RST, OUTPUT);
     pinMode(TFT_DC, OUTPUT);
     digitalWrite(TFT_DC, HIGH);
@@ -90,6 +88,8 @@ void _setup_gpio() {
 ** Function name: _post_setup_gpio()
 ***************************************************************************************/
 void _post_setup_gpio() {
+    hal_bright_attach(TFT_BL);
+    hal_bright_set(TFT_BL, 100);
     // Can be used for second-stage init if needed
 }
 

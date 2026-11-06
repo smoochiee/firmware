@@ -1,5 +1,6 @@
 #include "core/i2c_finder.h"
 #include "core/powerSave.h"
+#include "core/sd_functions.h"
 #include "core/utils.h"
 #include "hal/bright/bright.h"
 #include <Wire.h>
@@ -20,11 +21,11 @@ void IRAM_ATTR expanderISR() { expanderInterrupt = true; }
 ***************************************************************************************/
 void _setup_gpio() {
     bruceConfigPins.i2c_bus = {(gpio_num_t)4, (gpio_num_t)5}; // sda, scl (Grove)
-    bruceConfigPins.rfTx = 4;
-    bruceConfigPins.rfRx = 5;
+                                                              // bruceConfigPins.rfTx = 4;
+                                                              // bruceConfigPins.rfRx = 5;
     bruceConfigPins.irTx = 25;
     bruceConfigPins.irRx = 26;
-    bruceConfigPins.rotation = 1;
+    bruceConfigPins.rotation = 3;
     bruceConfigPins.uart_bus = {(gpio_num_t)12, (gpio_num_t)11};   // rx, tx
     bruceConfigPins.gps_bus = {(gpio_num_t)12, (gpio_num_t)11};    // rx, tx
     bruceConfigPins.badusb_bus = {(gpio_num_t)12, (gpio_num_t)11}; // rx, tx (CH9329)
@@ -47,6 +48,8 @@ void _setup_gpio() {
     digitalWrite(TFT_MOSI, HIGH);
     pinMode(TFT_SCLK, OUTPUT);
 
+    hal_bright_attach(TFT_BL);
+    hal_bright_set(TFT_BL, 100);
     pinMode(TFT_RST, OUTPUT);
     pinMode(TFT_DC, OUTPUT);
     digitalWrite(TFT_DC, HIGH);
@@ -84,12 +87,36 @@ void _setup_gpio() {
     digitalWrite(TFT_CS, HIGH);
 }
 
+void _pre_storage_gpio() {
+    if (ioExpander.readPin(IO_EXP_SEL) != LOW || ioExpander.readPin(IO_EXP_ESC) != LOW) return;
+
+    constexpr uint32_t recoveryHoldMs = 2000;
+    uint32_t pressedAt = millis();
+    Serial.println("[Recovery] Hold SEL + ESC for 2 seconds to reset Bruce config");
+
+    while (millis() - pressedAt < recoveryHoldMs) {
+        if (ioExpander.readPin(IO_EXP_SEL) != LOW || ioExpander.readPin(IO_EXP_ESC) != LOW) return;
+        delay(10);
+    }
+
+    if (!setupSdCard()) {
+        Serial.println("[Recovery] Failed to mount SD card");
+        return;
+    }
+
+    bool pinsRemoved = !SD.exists("/brucePins.conf") || SD.remove("/brucePins.conf");
+    bool configRemoved = !SD.exists("/bruce.conf") || SD.remove("/bruce.conf");
+    if (!pinsRemoved || !configRemoved) {
+        Serial.println("[Recovery] Failed to remove one or more config files");
+    } else {
+        Serial.println("[Recovery] Removed /brucePins.conf and /bruce.conf; other SD files were preserved");
+    }
+}
+
 /***************************************************************************************
 ** Function name: _post_setup_gpio()
 ***************************************************************************************/
 void _post_setup_gpio() {
-    hal_bright_attach(TFT_BL);
-    hal_bright_set(TFT_BL, 100);
     // Can be used for second-stage init if needed
 }
 
@@ -215,8 +242,7 @@ void InputHandler() {
             return true;
         }
 
-        if (now - state.pressedAt >= kRepeatDelayMs &&
-            now - state.lastSentAt >= kRepeatIntervalMs) {
+        if (now - state.pressedAt >= kRepeatDelayMs && now - state.lastSentAt >= kRepeatIntervalMs) {
             state.lastSentAt = now;
             return true;
         }

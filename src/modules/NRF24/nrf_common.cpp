@@ -50,10 +50,17 @@ bool nrf_start(NRF24_MODE mode) {
     digitalWrite(bruceConfigPins.NRF24_bus.cs, HIGH);
     pinMode(bruceConfigPins.NRF24_bus.io0, OUTPUT);
     digitalWrite(bruceConfigPins.NRF24_bus.io0, LOW);
+#ifdef IO_EXP_NRF
+    ioExpander.setPinDirection(IO_EXP_NRF, OUTPUT);
+    ioExpander.turnPinOnOff(IO_EXP_NRF, HIGH);
+    delay(5); // Allow the switched radio supply to stabilize before probing it
+#endif
+
     delay(5); // Let pins settle before SPI traffic
 
-    NRFSPI =
-        acquireSPIBus(bruceConfigPins.NRF24_bus.sck, bruceConfigPins.NRF24_bus.miso, bruceConfigPins.NRF24_bus.mosi);
+    NRFSPI = acquireSPIBus(
+        bruceConfigPins.NRF24_bus.sck, bruceConfigPins.NRF24_bus.miso, bruceConfigPins.NRF24_bus.mosi
+    );
     if (!NRFSPI) {
         Serial.println("No hardware SPI bus available for NRF24, falling back to default SPI");
         NRFSPI = &SPI;
@@ -67,6 +74,9 @@ bool nrf_start(NRF24_MODE mode) {
         )) {
         result = true;
     } else {
+#ifdef IO_EXP_NRF
+        ioExpander.turnPinOnOff(IO_EXP_NRF, LOW);
+#endif
         return false;
     }
     return result;

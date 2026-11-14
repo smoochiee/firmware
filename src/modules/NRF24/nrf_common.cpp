@@ -46,15 +46,18 @@ bool nrf_start(NRF24_MODE mode) {
     // Always re-assert CE LOW and CS HIGH before begin() — these pins
     // may have been left in an indeterminate state by the previous session,
     // especially after stopConstCarrier() which can leave CE HIGH internally.
+
+
+    #ifdef IO_EXP_NRF
+    ioExpander.setPinDirection(IO_EXP_NRF, OUTPUT);
+    ioExpander.turnPinOnOff(IO_EXP_NRF, HIGH);
+    delay(5); // Allow the switched radio supply to stabilize before probing it
+    #endif
     pinMode(bruceConfigPins.NRF24_bus.cs, OUTPUT);
     digitalWrite(bruceConfigPins.NRF24_bus.cs, HIGH);
     pinMode(bruceConfigPins.NRF24_bus.io0, OUTPUT);
     digitalWrite(bruceConfigPins.NRF24_bus.io0, LOW);
-#ifdef IO_EXP_NRF
-    ioExpander.setPinDirection(IO_EXP_NRF, OUTPUT);
-    ioExpander.turnPinOnOff(IO_EXP_NRF, HIGH);
-    delay(5); // Allow the switched radio supply to stabilize before probing it
-#endif
+
 
     delay(5); // Let pins settle before SPI traffic
 

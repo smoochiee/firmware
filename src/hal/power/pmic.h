@@ -11,6 +11,9 @@ bool hal_pmic_init_via_callbacks(
 );
 
 void hal_pmic_shutdown();
+bool hal_pmic_is_vbus_in();
+void hal_pmic_enable_charge();
+void hal_pmic_disable_charge();
 void hal_pmic_enable_otg(); // 5V boost output
 void hal_pmic_disable_otg();
 bool hal_pmic_is_charging();

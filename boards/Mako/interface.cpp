@@ -29,7 +29,7 @@ void _setup_gpio() {
     bruceConfigPins.rfRx = -1;
     bruceConfigPins.irTx = 26;
     bruceConfigPins.irRx = 25;
-    bruceConfigPins.rotation = 1;
+    bruceConfigPins.rotation = 2;
     bruceConfigPins.uart_bus = {(gpio_num_t)12, (gpio_num_t)11};   // rx, tx
     bruceConfigPins.gps_bus = {(gpio_num_t)11, (gpio_num_t)12};    // rx, tx
     bruceConfigPins.badusb_bus = {(gpio_num_t)12, (gpio_num_t)11}; // rx, tx (CH9329)
@@ -54,7 +54,7 @@ void _setup_gpio() {
     pinMode(TFT_MOSI, OUTPUT);
     digitalWrite(TFT_MOSI, HIGH);
     pinMode(TFT_SCLK, OUTPUT);
-    pinMode(TFT_RST, OUTPUT);
+    // if (TFT_RST >= 0) pinMode(TFT_RST, OUTPUT);
     pinMode(TFT_DC, OUTPUT);
     digitalWrite(TFT_DC, HIGH);
 
@@ -92,6 +92,35 @@ void _setup_gpio() {
     digitalWrite(TFT_CS, HIGH);
 }
 
+void _pre_storage_gpio() {
+    if (ioExpander.readPin(IO_EXP_SEL) != LOW || ioExpander.readPin(IO_EXP_ESC) != LOW) return;
+
+    constexpr uint32_t recoveryHoldMs = 2000;
+    uint32_t pressedAt = millis();
+    Serial.println("[Recovery] Hold SEL + ESC for 2 seconds to reset Bruce config");
+
+    while (millis() - pressedAt < recoveryHoldMs) {
+        if (ioExpander.readPin(IO_EXP_SEL) != LOW || ioExpander.readPin(IO_EXP_ESC) != LOW) return;
+        delay(10);
+    }
+
+    Serial.println("[Recovery] Triggered; release SEL + ESC");
+    while (ioExpander.readPin(IO_EXP_SEL) == LOW || ioExpander.readPin(IO_EXP_ESC) == LOW) { delay(10); }
+
+    if (!setupSdCard()) {
+        Serial.println("[Recovery] Failed to mount SD card");
+        return;
+    }
+
+    bool pinsRemoved = !SD.exists("/brucePins.conf") || SD.remove("/brucePins.conf");
+    bool configRemoved = !SD.exists("/bruce.conf") || SD.remove("/bruce.conf");
+    if (!pinsRemoved || !configRemoved) {
+        Serial.println("[Recovery] Failed to remove one or more config files");
+    } else {
+        Serial.println("[Recovery] Removed /brucePins.conf and /bruce.conf; other SD files were preserved");
+    }
+}
+
 /***************************************************************************************
 ** Function name: _post_setup_gpio()
 ** Description:   second stage gpio setup after TFT is initialized
@@ -100,6 +129,16 @@ void _post_setup_gpio() {
     // Backlight control via PWM (must be after TFT init)
     hal_bright_attach(TFT_BL);
     hal_bright_set(TFT_BL, 100); // Full brightness initially
+
+    pinMode(bruceConfigPins.NRF24_bus.io0, OUTPUT);
+    digitalWrite(bruceConfigPins.NRF24_bus.io0, LOW);
+    ioExpander.turnPinOnOff(IO_EXP_NRF, LOW);
+    delay(100);
+    ioExpander.turnPinOnOff(IO_EXP_NRF, HIGH);
+    delay(5);
+    digitalWrite(bruceConfigPins.NRF24_bus.cs, HIGH);
+    digitalWrite(bruceConfigPins.NRF24_bus.io0, LOW);
+    ioExpander.turnPinOnOff(IO_EXP_NRF, LOW);
 }
 
 /***************************************************************************************
@@ -121,7 +160,47 @@ int getBattery() {
 /***************************************************************************************
 ** Function name: isCharging()
 ***************************************************************************************/
-bool isCharging() { return hal_pmic_is_charging(); }
+bool isCharging() { return hal_pmic_is_charging() && !hal_pmic_is_charge_done(); }
+
+static void checkPmicBattery() {
+    static uint32_t lastCheck = 0;
+    static uint32_t lowBatterySince = 0;
+    static bool chargingEnabled = true;
+    static bool shutdownRequested = false;
+
+    uint32_t now = millis();
+    if (shutdownRequested || now - lastCheck < 1000) return;
+    lastCheck = now;
+
+    bool vbusIn = hal_pmic_is_vbus_in();
+    if (vbusIn != chargingEnabled) {
+        if (vbusIn) hal_pmic_enable_charge();
+        else hal_pmic_disable_charge();
+        chargingEnabled = vbusIn;
+    }
+
+    if (vbusIn) {
+        lowBatterySince = 0;
+        return;
+    }
+
+    int voltage = hal_pmic_get_batt_voltage_mv();
+    if (voltage < 0) {
+        lowBatterySince = 0;
+        return;
+    }
+    if (voltage >= 3300) {
+        lowBatterySince = 0;
+        return;
+    }
+
+    if (lowBatterySince == 0) lowBatterySince = now;
+    else if (now - lowBatterySince >= 2000) {
+        Serial.printf("[PMIC] Battery critically low (%d mV); shutting down\n", voltage);
+        shutdownRequested = true;
+        powerOff();
+    }
+}
 
 /*********************************************************************
 ** Function: setBrightness
@@ -134,15 +213,25 @@ void _setBrightness(uint8_t brightval) { hal_bright_set(TFT_BL, brightval); }
 ** using IO Expander
 **********************************************************************/
 void InputHandler() {
+    checkPmicBattery();
+
     static unsigned long tm = 0;
 
-    static bool lastUp = false;
-    static bool lastDown = false;
-    static bool lastLeft = false;
-    static bool lastRight = false;
+    struct RepeatState {
+        bool wasPressed = false;
+        unsigned long pressedAt = 0;
+        unsigned long lastSentAt = 0;
+    };
+    static RepeatState upRepeat;
+    static RepeatState downRepeat;
+    static RepeatState leftRepeat;
+    static RepeatState rightRepeat;
     static bool lastSel = false;
     static bool lastEsc = false;
+    constexpr unsigned long kRepeatDelayMs = 500;
+    constexpr unsigned long kRepeatIntervalMs = 250;
 
+    delay(2);
     uint16_t pins = ioExpander.inputGPIO();
 
     bool up = !(pins & (1 << IO_EXP_UP));
@@ -152,6 +241,11 @@ void InputHandler() {
     bool sel = !(pins & (1 << IO_EXP_SEL));
     bool esc = !(pins & (1 << IO_EXP_ESC));
     bool anyPressed = up || down || left || right || sel || esc;
+
+    if (!up) upRepeat.wasPressed = false;
+    if (!down) downRepeat.wasPressed = false;
+    if (!left) leftRepeat.wasPressed = false;
+    if (!right) rightRepeat.wasPressed = false;
 
     if (!expanderInterrupt && !LongPress && (millis() - tm < 250)) { return; }
 
@@ -165,26 +259,43 @@ void InputHandler() {
         }
     }
 
-    UpPress = up && !lastUp;
-    DownPress = down && !lastDown;
-    PrevPress = left && !lastLeft;
-    NextPress = right && !lastRight;
+    const unsigned long now = millis();
+    auto repeatPressed = [now](bool pressed, RepeatState &state) {
+        if (!pressed) {
+            state.wasPressed = false;
+            return false;
+        }
+
+        if (!state.wasPressed) {
+            state.wasPressed = true;
+            state.pressedAt = now;
+            state.lastSentAt = now;
+            return true;
+        }
+
+        if (now - state.pressedAt >= kRepeatDelayMs && now - state.lastSentAt >= kRepeatIntervalMs) {
+            state.lastSentAt = now;
+            return true;
+        }
+        return false;
+    };
+
+    UpPress = repeatPressed(up, upRepeat);
+    DownPress = repeatPressed(down, downRepeat);
+    PrevPress = repeatPressed(left, leftRepeat);
+    NextPress = repeatPressed(right, rightRepeat);
     SelPress = sel && !lastSel;
     EscPress = esc && !lastEsc;
 
     PrevPagePress = UpPress;
     NextPagePress = DownPress;
 
-    lastUp = up;
-    lastDown = down;
-    lastLeft = left;
-    lastRight = right;
     lastSel = sel;
     lastEsc = esc;
 
     expanderInterrupt = false;
 }
-/*********************************************************************
+/******************************************`**************************
 ** Function: powerOff
 **********************************************************************/
 void powerOff() { hal_pmic_shutdown(); }

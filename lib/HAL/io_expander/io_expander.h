@@ -102,12 +102,8 @@ public:
         output(IO_EXP_CC_RX, LOW); // SMOOCHIE||REAPER
         output(IO_EXP_CC_TX, LOW); // SMOOCHIE||REAPER
         output(IO_EXP_LOGO, HIGH); // BRUCE LOGO LED ON REAPER
-        output(
-            IO_EXP_NRF, HIGH
-        ); // NRF ON BY DEFAULT FOR Mako need a separate setTings FOR MAKO to be able to use a the header
-        output(
-            IO_EXP_UART, LOW
-        ); 
+        output(IO_EXP_NRF, HIGH); ///MAKO SWITCH
+        output(IO_EXP_UART, LOW); //PEBBLE
         output(IO_EXP_NFC, LOW); // ST25R NFC chip power on Lilygo T-LoraPager||MAKO
 
         // Set button pins as inputs
